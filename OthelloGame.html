@@ -1,0 +1,505 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>ブルーオセロ</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- React & ReactDOM -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- Babel -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <style>
+        * {
+            -webkit-tap-highlight-color: transparent;
+            touch-action: manipulation;
+        }
+        body {
+            background-color: #f5f5f4;
+        }
+        .stone-shadow-blue {
+            box-shadow: 2px 2px 4px rgba(0,0,0,0.4), inset 2px 2px 4px rgba(255,255,255,0.3);
+        }
+        .stone-shadow-white {
+            box-shadow: 2px 2px 4px rgba(0,0,0,0.4), inset -2px -2px 4px rgba(0,0,0,0.1);
+        }
+        /* スライダーのカスタマイズ */
+        input[type=range] {
+            -webkit-appearance: none; 
+            background: transparent; 
+        }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            height: 24px;
+            width: 24px;
+            border-radius: 50%;
+            background: #2563eb;
+            cursor: pointer;
+            margin-top: -10px; 
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%;
+            height: 4px;
+            cursor: pointer;
+            background: #cbd5e1;
+            border-radius: 2px;
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useCallback, useRef } = React;
+
+        // --- アイコン ---
+        const IconUser = ({ size = 24, className = "" }) => (
+            <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+        );
+        const IconCpu = ({ size = 24, className = "" }) => (
+            <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><rect x="4" y="4" width="16" height="16" rx="2" ry="2"></rect><line x1="9" y1="9" x2="9" y2="9"></line><line x1="15" y1="9" x2="15" y2="9"></line><path d="M9 1v3"></path><path d="M15 1v3"></path><path d="M9 20v3"></path><path d="M15 20v3"></path><path d="M20 9h3"></path><path d="M20 14h3"></path><path d="M1 9h3"></path><path d="M1 14h3"></path></svg>
+        );
+        const IconRefresh = ({ size = 24, className = "" }) => (
+            <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M3 2v6h6"></path><path d="M3 13a9 9 0 1 0 3-7.7L3 8"></path></svg>
+        );
+        const IconInfo = ({ size = 24, className = "" }) => (
+            <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
+        );
+        const IconX = ({ size = 24, className = "" }) => (
+            <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        );
+        const IconHome = ({ size = 24, className = "" }) => (
+            <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>
+        );
+
+        // --- 定数 ---
+        const BOARD_SIZE = 8;
+        const PLAYER = 'player';
+        const CPU = 'cpu';
+        const EMPTY = null;
+
+        const DIRECTIONS = [
+            [-1, 0], [-1, 1], [0, 1], [1, 1],
+            [1, 0], [1, -1], [0, -1], [-1, -1]
+        ];
+
+        // 盤面の重み（基本評価）
+        const BOARD_WEIGHTS = [
+            [120, -20, 20,  5,  5, 20, -20, 120],
+            [-20, -40, -5, -5, -5, -5, -40, -20],
+            [ 20,  -5, 15,  3,  3, 15,  -5,  20],
+            [  5,  -5,  3,  3,  3,  3,  -5,   5],
+            [  5,  -5,  3,  3,  3,  3,  -5,   5],
+            [ 20,  -5, 15,  3,  3, 15,  -5,  20],
+            [-20, -40, -5, -5, -5, -5, -40, -20],
+            [120, -20, 20,  5,  5, 20, -20, 120],
+        ];
+
+        // --- ユーティリティ関数 ---
+        const isValidPos = (row, col) => row >= 0 && row < BOARD_SIZE && col >= 0 && col < BOARD_SIZE;
+
+        // ひっくり返せる石を探す
+        const getFlippableDiscs = (currentBoard, turn, row, col) => {
+            if (currentBoard[row][col] !== EMPTY) return [];
+            let flippable = [];
+            const opponent = turn === PLAYER ? CPU : PLAYER;
+
+            DIRECTIONS.forEach(([dr, dc]) => {
+                let r = row + dr;
+                let c = col + dc;
+                let tempFlippable = [];
+                while (isValidPos(r, c) && currentBoard[r][c] === opponent) {
+                    tempFlippable.push({ r, c });
+                    r += dr;
+                    c += dc;
+                }
+                if (isValidPos(r, c) && currentBoard[r][c] === turn && tempFlippable.length > 0) {
+                    flippable = [...flippable, ...tempFlippable];
+                }
+            });
+            return flippable;
+        };
+
+        // 有効手一覧
+        const calculateValidMoves = (currentBoard, turn) => {
+            const moves = [];
+            for (let r = 0; r < BOARD_SIZE; r++) {
+                for (let c = 0; c < BOARD_SIZE; c++) {
+                    const flippable = getFlippableDiscs(currentBoard, turn, r, c);
+                    if (flippable.length > 0) {
+                        moves.push({ r, c, flippable });
+                    }
+                }
+            }
+            return moves;
+        };
+
+        // スコア計算
+        const calculateScores = (currentBoard) => {
+            let player = 0, cpu = 0;
+            currentBoard.forEach(row => row.forEach(cell => {
+                if (cell === PLAYER) player++;
+                if (cell === CPU) cpu++;
+            }));
+            return { player, cpu };
+        };
+
+        // 盤面評価関数（CPU思考用）
+        const evaluateBoard = (board, turn) => {
+            let score = 0;
+            const opponent = turn === PLAYER ? CPU : PLAYER;
+
+            for (let r = 0; r < BOARD_SIZE; r++) {
+                for (let c = 0; c < BOARD_SIZE; c++) {
+                    const cell = board[r][c];
+                    if (cell === turn) {
+                        score += BOARD_WEIGHTS[r][c];
+                    } else if (cell === opponent) {
+                        score -= BOARD_WEIGHTS[r][c];
+                    }
+                }
+            }
+            return score;
+        };
+
+        // --- メインコンポーネント ---
+        function OthelloApp() {
+            const [gameState, setGameState] = useState('start'); // start, playing, finished
+            const [cpuLevel, setCpuLevel] = useState(5); // 1-10
+            
+            const [board, setBoard] = useState([]);
+            const [currentTurn, setCurrentTurn] = useState(PLAYER);
+            const [winner, setWinner] = useState(null);
+            const [validMoves, setValidMoves] = useState([]);
+            const [scores, setScores] = useState({ player: 2, cpu: 2 });
+            const [message, setMessage] = useState('');
+            const [showHelp, setShowHelp] = useState(false);
+            const [isThinking, setIsThinking] = useState(false);
+            
+            const gameOverRef = useRef(false);
+
+            // ゲーム初期化
+            const initializeGame = useCallback(() => {
+                const newBoard = Array(BOARD_SIZE).fill(null).map(() => Array(BOARD_SIZE).fill(EMPTY));
+                newBoard[3][3] = CPU; newBoard[3][4] = PLAYER;
+                newBoard[4][3] = PLAYER; newBoard[4][4] = CPU;
+
+                setBoard(newBoard);
+                setCurrentTurn(PLAYER);
+                setWinner(null);
+                setIsThinking(false);
+                gameOverRef.current = false;
+                
+                const moves = calculateValidMoves(newBoard, PLAYER);
+                setValidMoves(moves);
+                setScores({ player: 2, cpu: 2 });
+                setMessage('あなたの番です（青）');
+                setGameState('playing');
+            }, []);
+
+            // ターン進行
+            useEffect(() => {
+                if (gameState !== 'playing' || gameOverRef.current) return;
+
+                const moves = calculateValidMoves(board, currentTurn);
+                setValidMoves(moves);
+                setScores(calculateScores(board));
+
+                if (moves.length === 0) {
+                    const opponent = currentTurn === PLAYER ? CPU : PLAYER;
+                    const opponentMoves = calculateValidMoves(board, opponent);
+
+                    if (opponentMoves.length === 0) {
+                        gameOverRef.current = true;
+                        const s = calculateScores(board);
+                        let result = 'draw';
+                        if (s.player > s.cpu) result = PLAYER;
+                        if (s.cpu > s.player) result = CPU;
+                        setWinner(result);
+                        setGameState('finished');
+                    } else {
+                        setMessage(`${currentTurn === PLAYER ? 'あなた' : 'CPU'}はパスです`);
+                        setTimeout(() => setCurrentTurn(opponent), 1500);
+                    }
+                    return;
+                }
+
+                if (currentTurn === CPU && moves.length > 0) {
+                    setIsThinking(true);
+                    setMessage(`CPU (Lv.${cpuLevel}) が思考中...`);
+                    // 思考時間の演出
+                    const delay = Math.max(500, cpuLevel * 100); 
+                    const timer = setTimeout(() => makeCPUMove(moves), delay);
+                    return () => clearTimeout(timer);
+                } else {
+                    setMessage('あなたの番です（青）');
+                }
+            }, [currentTurn, board, gameState]);
+
+            // AIの思考ロジック
+            const makeCPUMove = (moves) => {
+                if (moves.length === 0) return;
+
+                let bestMove = moves[0];
+                let maxScore = -Infinity;
+
+                // レベル1-3: ランダム性重視
+                if (cpuLevel <= 3) {
+                    if (cpuLevel === 1) {
+                        bestMove = moves[Math.floor(Math.random() * moves.length)];
+                    } else {
+                        moves.forEach(move => {
+                            let score = move.flippable.length;
+                            score += Math.random() * (4 - cpuLevel) * 5; 
+                            if (score > maxScore) { maxScore = score; bestMove = move; }
+                        });
+                    }
+                } 
+                // レベル4-7: 盤面の重み付け
+                else if (cpuLevel <= 7) {
+                    moves.forEach(move => {
+                        let score = BOARD_WEIGHTS[move.r][move.c]; 
+                        const noise = (8 - cpuLevel) * 10; 
+                        score += (Math.random() * noise) - (noise / 2);
+                        if (score > maxScore) { maxScore = score; bestMove = move; }
+                    });
+                }
+                // レベル8-10: 1手先読み
+                else {
+                    moves.forEach(move => {
+                        const tempBoard = board.map(r => [...r]);
+                        tempBoard[move.r][move.c] = CPU;
+                        move.flippable.forEach(({r, c}) => { tempBoard[r][c] = CPU; });
+
+                        let currentEval = evaluateBoard(tempBoard, CPU);
+
+                        const playerMoves = calculateValidMoves(tempBoard, PLAYER);
+                        let maxPlayerEval = -Infinity;
+                        
+                        if (playerMoves.length > 0) {
+                            playerMoves.forEach(pMove => {
+                                let pScore = BOARD_WEIGHTS[pMove.r][pMove.c];
+                                if (pScore > maxPlayerEval) maxPlayerEval = pScore;
+                            });
+                        } else {
+                            maxPlayerEval = 0;
+                        }
+
+                        if (cpuLevel === 10) {
+                            if ((move.r === 0 || move.r === 7) && (move.c === 0 || move.c === 7)) {
+                                currentEval += 200;
+                            }
+                        }
+
+                        const totalScore = currentEval - maxPlayerEval;
+
+                        if (totalScore > maxScore) {
+                            maxScore = totalScore;
+                            bestMove = move;
+                        }
+                    });
+                }
+
+                executeMove(bestMove.r, bestMove.c, bestMove.flippable);
+            };
+
+            const executeMove = (row, col, flippable) => {
+                const newBoard = board.map(row => [...row]);
+                newBoard[row][col] = currentTurn;
+                flippable.forEach(({ r, c }) => { newBoard[r][c] = currentTurn; });
+                setBoard(newBoard);
+                setIsThinking(false);
+                setCurrentTurn(currentTurn === PLAYER ? CPU : PLAYER);
+            };
+
+            const handleCellClick = (row, col) => {
+                if (gameState !== 'playing' || currentTurn !== PLAYER || isThinking) return;
+                const move = validMoves.find(m => m.r === row && m.c === col);
+                if (move) executeMove(row, col, move.flippable);
+            };
+
+            const getCellClass = (row, col) => {
+                let base = "w-full h-full border border-green-800 relative flex items-center justify-center select-none transition-colors duration-200 bg-green-600";
+                const isValid = gameState === 'playing' && !winner && currentTurn === PLAYER && validMoves.some(m => m.r === row && m.c === col);
+                if (isValid) base += " cursor-pointer hover:bg-green-500";
+                return base;
+            };
+
+            // レベルに応じた説明文を取得
+            const getLevelDescription = (level) => {
+                if (level <= 2) return { title: "入門向け", text: "ルールを覚えたての方へ。まずはここから。", color: "text-green-600" };
+                if (level <= 4) return { title: "初級者向け", text: "少し慣れてきた方へ。油断は禁物です。", color: "text-teal-600" };
+                if (level <= 6) return { title: "中級者向け", text: "勝ち方を掴んできた方へ。熱い勝負を楽しめます。", color: "text-blue-600" };
+                if (level <= 8) return { title: "上級者向け", text: "腕に自信がある方へ。AIも本気を出します。", color: "text-indigo-600" };
+                return { title: "達人向け", text: "最強AIに挑戦！限界に挑みたい方へ。", color: "text-red-600" };
+            };
+
+            const levelInfo = getLevelDescription(cpuLevel);
+
+            // --- 画面描画 ---
+
+            // スタート画面
+            if (gameState === 'start') {
+                return (
+                    <div 
+                        className="min-h-screen font-sans flex flex-col items-center justify-center p-6 text-stone-800 bg-cover bg-center relative"
+                        style={{ backgroundImage: "url('image_75e247.jpg')" }}
+                    >
+                        {/* 背景を少し暗く青くするフィルター（文字を見やすくするため） */}
+                        <div className="absolute inset-0 bg-blue-900/30 backdrop-blur-[2px]"></div>
+
+                        <div className="max-w-md w-full bg-white/90 backdrop-blur-md rounded-2xl shadow-2xl p-8 text-center space-y-8 relative z-10 border border-white/50">
+                            <div>
+                                <h1 className="text-4xl font-bold text-blue-600 mb-2 drop-shadow-sm">ブルーオセロ</h1>
+                                <p className="text-stone-500 font-medium">Deep Ocean Othello</p>
+                            </div>
+
+                            <div className="space-y-6">
+                                <div className="text-left">
+                                    <label className="block text-sm font-bold text-stone-700 mb-4 flex justify-between items-end">
+                                        <span>CPUレベルを選択</span>
+                                        <div className="text-right">
+                                            <span className={`block text-2xl font-bold ${levelInfo.color}`}>Lv. {cpuLevel}</span>
+                                            <span className={`text-xs font-bold ${levelInfo.color}`}>{levelInfo.title}</span>
+                                        </div>
+                                    </label>
+                                    <input 
+                                        type="range" 
+                                        min="1" max="10" 
+                                        value={cpuLevel} 
+                                        onChange={(e) => setCpuLevel(parseInt(e.target.value))}
+                                        className="w-full h-2 bg-stone-200 rounded-lg appearance-none cursor-pointer mb-2"
+                                    />
+                                    <div className="flex justify-between text-xs text-stone-400">
+                                        <span>Lv.1 (最弱)</span>
+                                        <span>Lv.10 (最強)</span>
+                                    </div>
+                                </div>
+
+                                <div className={`p-4 rounded-xl bg-stone-50/80 border-l-4 ${levelInfo.color.replace('text', 'border')} text-left shadow-sm transition-all duration-300`}>
+                                    <p className="font-bold text-stone-700 mb-1">{levelInfo.title}</p>
+                                    <p className="text-sm text-stone-600">{levelInfo.text}</p>
+                                </div>
+                            </div>
+
+                            <button 
+                                onClick={initializeGame}
+                                className="w-full py-4 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl shadow-lg transform transition active:scale-95 text-lg flex items-center justify-center gap-2"
+                            >
+                                ゲームスタート
+                            </button>
+                        </div>
+                    </div>
+                );
+            }
+
+            // ゲーム画面
+            return (
+                <div className="min-h-screen font-sans flex flex-col items-center justify-center p-4 select-none">
+                    
+                    {/* ヘッダー */}
+                    <div className="w-full max-w-md mb-4 flex justify-between items-center">
+                        <div className="flex flex-col">
+                            <h1 className="text-2xl font-bold text-green-900 tracking-wider">ブルーオセロ</h1>
+                            <span className="text-xs font-bold text-stone-400">Lv.{cpuLevel} MODE</span>
+                        </div>
+                        <div className="flex gap-2">
+                            <button onClick={() => setGameState('start')} className="p-2 rounded-full bg-white shadow hover:bg-stone-100 text-stone-600 transition-colors" title="ホームへ">
+                                <IconHome size={20} />
+                            </button>
+                            <button onClick={() => setShowHelp(!showHelp)} className="p-2 rounded-full bg-white shadow hover:bg-green-50 text-green-700 transition-colors">
+                                <IconInfo size={20} />
+                            </button>
+                            <button onClick={initializeGame} className="p-2 rounded-full bg-white shadow hover:bg-green-50 text-green-700 transition-colors" title="リセット">
+                                <IconRefresh size={20} />
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* スコアボード */}
+                    <div className="w-full max-w-md bg-white rounded-xl shadow-lg p-4 mb-6 flex items-center justify-between border border-stone-200">
+                        {/* Player */}
+                        <div className={`flex flex-col items-center px-4 py-2 rounded-lg transition-all duration-300 ${currentTurn === PLAYER && !winner ? 'bg-blue-50 ring-2 ring-blue-400' : ''}`}>
+                            <div className="flex items-center gap-2 mb-1"><IconUser size={16} className="text-blue-600"/><span className="text-xs font-bold text-blue-600">YOU</span></div>
+                            <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-400 to-blue-600 shadow-md flex items-center justify-center mb-1"></div>
+                            <span className="font-bold text-2xl text-stone-700">{scores.player}</span>
+                        </div>
+
+                        {/* メッセージ */}
+                        <div className="flex-1 px-2 text-center min-w-[120px]">
+                            {winner ? (
+                                <div className="animate-pulse">
+                                    <span className="block text-lg font-bold text-green-700 mb-2">
+                                        {winner === 'draw' ? '引き分け！' : winner === PLAYER ? '勝利！' : '敗北...'}
+                                    </span>
+                                    <button onClick={initializeGame} className="text-xs bg-green-700 text-white px-4 py-2 rounded-full hover:bg-green-800 shadow-lg font-bold">再戦する</button>
+                                </div>
+                            ) : (
+                                <div className="flex flex-col items-center">
+                                    <span className={`text-sm font-bold mb-1 ${currentTurn === PLAYER ? 'text-blue-600' : 'text-stone-500'}`}>
+                                        {isThinking ? 'Thinking...' : message}
+                                    </span>
+                                    <div className="flex gap-1">
+                                        <div className={`w-2 h-2 rounded-full transition-colors ${currentTurn === PLAYER ? 'bg-blue-500' : 'bg-stone-200'}`}></div>
+                                        <div className={`w-2 h-2 rounded-full transition-colors ${currentTurn === CPU ? 'bg-stone-400' : 'bg-stone-200'}`}></div>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+
+                        {/* CPU */}
+                        <div className={`flex flex-col items-center px-4 py-2 rounded-lg transition-all duration-300 ${currentTurn === CPU && !winner ? 'bg-stone-100 ring-2 ring-stone-400' : ''}`}>
+                            <div className="flex items-center gap-2 mb-1"><span className="text-xs font-bold text-stone-600">Lv.{cpuLevel}</span><IconCpu size={16} className="text-stone-600"/></div>
+                            <div className="w-10 h-10 rounded-full bg-gradient-to-br from-white to-stone-200 border border-stone-300 shadow-md flex items-center justify-center mb-1"></div>
+                            <span className="font-bold text-2xl text-stone-700">{scores.cpu}</span>
+                        </div>
+                    </div>
+
+                    {/* ゲーム盤 */}
+                    <div className="relative bg-stone-800 p-3 rounded-lg shadow-2xl">
+                        <div className="grid grid-cols-8 gap-0.5 bg-stone-900 border-4 border-stone-800 rounded w-[85vw] h-[85vw] max-w-[400px] max-h-[400px]">
+                            {board.map((row, rIndex) => (
+                                row.map((cell, cIndex) => {
+                                    return (
+                                        <div key={`${rIndex}-${cIndex}`} className={getCellClass(rIndex, cIndex)} onClick={() => handleCellClick(rIndex, cIndex)}>
+                                            {cell && <div className={`w-[85%] h-[85%] rounded-full transition-all duration-500 transform ${cell === PLAYER ? 'bg-gradient-to-br from-blue-400 to-blue-600 scale-100 stone-shadow-blue' : 'bg-gradient-to-br from-white to-stone-200 scale-100 stone-shadow-white'}`} />}
+                                            {!cell && !winner && currentTurn === PLAYER && validMoves.some(m => m.r === rIndex && m.c === cIndex) && <div className="w-3 h-3 bg-black opacity-20 rounded-full"></div>}
+                                        </div>
+                                    );
+                                })
+                            ))}
+                        </div>
+                    </div>
+
+                    {/* ルールモーダル */}
+                    {showHelp && (
+                        <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center p-4 z-50 backdrop-blur-sm" onClick={() => setShowHelp(false)}>
+                            <div className="bg-white rounded-xl p-6 max-w-sm w-full shadow-2xl" onClick={e => e.stopPropagation()}>
+                                <div className="flex justify-between items-center mb-4"><h2 className="text-lg font-bold text-stone-800">ルール</h2><button onClick={() => setShowHelp(false)}><IconX size={20} /></button></div>
+                                <div className="space-y-3 text-sm text-stone-600">
+                                    <p>あなたは<span className="font-bold text-blue-600">青（先攻）</span>です。</p>
+                                    <ul className="list-disc pl-5 space-y-1">
+                                        <li>相手の石を挟んで自分の色にします。</li>
+                                        <li>黒い点が表示されている場所に置けます。</li>
+                                        <li>レベルが高いCPUは、角を狙ったり、あなたの嫌がる手を打ってきます。</li>
+                                    </ul>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<OthelloApp />);
+    </script>
+</body>
+</html>
